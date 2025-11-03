@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Chat App - WebSocket, WebRTC & E2E Encryption</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔒 Real-Time Chat Application</h1>
+            <p class="subtitle">Demonstrating WebSocket, WebRTC & End-to-End Encryption</p>
+        </header>
+        
+        <div class="status-bar">
+            <div class="status-item">
+                <span class="label">WebSocket:</span>
+                <span id="ws-status" class="status disconnected">Disconnected</span>
+            </div>
+            <div class="status-item">
+                <span class="label">WebRTC:</span>
+                <span id="rtc-status" class="status disconnected">Not Connected</span>
+            </div>
+            <div class="status-item">
+                <span class="label">Encryption:</span>
+                <span id="encryption-status" class="status active">AES-256 Active</span>
+            </div>
+            <div class="status-item">
+                <span class="label">Your ID:</span>
+                <span id="client-id" class="client-id">Connecting...</span>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="sidebar">
+                <h3>Features Demo</h3>
+                <div class="feature-section">
+                    <h4>📡 WebSocket</h4>
+                    <p>Real-time bidirectional communication for instant messaging</p>
+                </div>
+                <div class="feature-section">
+                    <h4>🎥 WebRTC</h4>
+                    <p>Peer-to-peer connection for direct communication</p>
+                    <button id="start-rtc-btn" class="btn btn-secondary" disabled>Start P2P Connection</button>
+                    <select id="peer-select" class="peer-select" disabled>
+                        <option value="">Select peer...</option>
+                    </select>
+                </div>
+                <div class="feature-section">
+                    <h4>🔐 E2E Encryption</h4>
+                    <p>Messages encrypted with AES-256-GCM before sending</p>
+                    <button id="show-key-btn" class="btn btn-secondary">Show Encryption Key</button>
+                </div>
+            </div>
+
+            <div class="chat-area">
+                <div id="messages" class="messages"></div>
+                <div class="input-area">
+                    <input 
+                        type="text" 
+                        id="message-input" 
+                        placeholder="Type your encrypted message..." 
+                        disabled
+                    >
+                    <button id="send-btn" class="btn btn-primary" disabled>Send</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="key-modal" class="modal">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <h2>Encryption Key</h2>
+                <p>This is your AES-256 encryption key (base64 encoded):</p>
+                <code id="encryption-key-display"></code>
+                <p class="note">⚠️ In production, keys should be securely exchanged, not displayed!</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="encryption.js"></script>
+    <script src="webrtc.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
