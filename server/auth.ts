@@ -29,6 +29,12 @@ export function generateIdentityKeyPair() {
 }
 
 export function setupAuth(app: Express) {
+  // Trust first proxy when behind Railway/Render/Heroku reverse proxy
+  // This is essential for secure cookies to work properly
+  if (process.env.NODE_ENV === "production") {
+    app.set("trust proxy", 1);
+  }
+
   const PgStore = connectPg(session);
   const sessionSettings: session.SessionOptions = {
     secret: process.env.SESSION_SECRET || "real-time-chat-secret",
@@ -36,9 +42,9 @@ export function setupAuth(app: Express) {
     saveUninitialized: false,
     cookie: {
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-      secure: process.env.NODE_ENV === "production", // Use secure cookies in production
+      secure: process.env.NODE_ENV === "production", // Use secure cookies in production (HTTPS)
       httpOnly: true,
-      sameSite: "lax",
+      sameSite: "lax", // "lax" is fine since frontend and backend are on same origin
     },
     store: new PgStore({
       pool: pool, // Use the existing PostgreSQL connection pool
@@ -121,11 +127,16 @@ export function setupAuth(app: Express) {
         })
         .returning();
 
+      console.log(`🔐 User ${newUser.username} registered, logging in...`);
+      
       req.login(newUser, (err) => {
         if (err) {
           console.error("Login error after registration:", err);
           return next(err);
         }
+        
+        console.log(`✅ Session created for user ${newUser.username}, session ID: ${req.sessionID}`);
+        
         return res.json({
           message: "Registration successful",
           user: {
@@ -151,6 +162,9 @@ export function setupAuth(app: Express) {
 
       req.logIn(user, (err) => {
         if (err) return next(err);
+        
+        console.log(`✅ Session created for user ${user.username}, session ID: ${req.sessionID}`);
+        
         return res.json({
           message: "Login successful",
           user: {
@@ -176,6 +190,8 @@ export function setupAuth(app: Express) {
   });
 
   app.get("/api/user", (req, res) => {
+    console.log(`🔍 GET /api/user - Session ID: ${req.sessionID}, Authenticated: ${req.isAuthenticated()}, User: ${req.user?.username || 'none'}`);
+    
     if (req.isAuthenticated()) {
       return res.json(req.user);
     }
