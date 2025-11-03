@@ -72,10 +72,10 @@ app.use((req, res, next) => {
   });
 
   // Setup Vite or serve static assets based on environment.
-  // Be defensive: if the environment reports development but Vite isn't
-  // available (e.g. devDependencies not installed in the runtime),
-  // fall back to serving static files instead of crashing the process.
-  if (app.get("env") === "development") {
+  // In production, we skip Vite entirely to avoid importing the dependency.
+  if (process.env.NODE_ENV === "production") {
+    serveStatic(app);
+  } else {
     try {
       await setupVite(app, server);
     } catch (err) {
@@ -84,8 +84,6 @@ app.use((req, res, next) => {
       log(`Vite setup failed, falling back to static serve: ${(err as Error).message}`);
       serveStatic(app);
     }
-  } else {
-    serveStatic(app);
   }
 
   // Start the server on provided PORT (for PaaS) or fallback to 5000

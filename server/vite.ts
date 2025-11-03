@@ -15,6 +15,11 @@ export function log(message: string, source = "express") {
 }
 
 export async function setupVite(app: Express, server: Server) {
+  // Fail fast in production environment
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("setupVite should not be called in production");
+  }
+
   // Dynamically import Vite and the vite config so this module can be
   // required in production without the `vite` devDependency being present.
   const { createServer: createViteServer, createLogger } = await import("vite");

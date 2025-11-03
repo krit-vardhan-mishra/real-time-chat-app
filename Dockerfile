@@ -20,12 +20,13 @@ FROM node:20-alpine AS runner
 ENV NODE_ENV=production
 WORKDIR /app
 
-# Copy only what's needed to run
+# Copy built artifacts and package files
 COPY --from=builder /app/dist ./dist
-COPY package.json ./package.json
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/package-lock.json* ./
 
-# Install production deps only
-RUN npm i --omit=dev --no-audit --no-fund
+# Install production dependencies only
+RUN npm ci --only=production --no-audit --no-fund || npm install --only=production --no-audit --no-fund
 
 # Expose port (Render/Railway/Heroku set PORT env var)
 EXPOSE 5000
