@@ -71,9 +71,19 @@ app.use((req, res, next) => {
     throw err;
   });
 
-  // Setup Vite or serve static assets based on environment
+  // Setup Vite or serve static assets based on environment.
+  // Be defensive: if the environment reports development but Vite isn't
+  // available (e.g. devDependencies not installed in the runtime),
+  // fall back to serving static files instead of crashing the process.
   if (app.get("env") === "development") {
-    await setupVite(app, server);
+    try {
+      await setupVite(app, server);
+    } catch (err) {
+      // Log and fallback to static serving. This prevents deployment crashes
+      // when NODE_ENV isn't correctly set or devDependencies are missing.
+      log(`Vite setup failed, falling back to static serve: ${(err as Error).message}`);
+      serveStatic(app);
+    }
   } else {
     serveStatic(app);
   }
