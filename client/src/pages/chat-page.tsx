@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-// FIX: Converted aliased imports to direct or relative paths
 import { useAuth } from "../hooks/use-auth"; // Assuming use-auth is in parent directory's hooks
 import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "../lib/queryClient"; // Assuming lib is in parent directory
@@ -12,8 +11,8 @@ import HelpSupportPage from "../pages/help-support-page"; // Relative path
 import { generateKeyPair, getKeys, storeKeys, encryptMessage, decryptMessageWithOtherPublic } from "../lib/crypto"; // Relative path
 import Message from "../data/message"; // Assuming data is in parent directory
 import Conversation from "../data/conversation"; // Assuming data is in parent directory
-import { useWebRTC } from "../hooks/use-webrtc"; // Assuming use-webrtc is in parent directory's hooks
-import CallPanel from "../components/chat/call-panel"; // Relative path
+import CallPanel from "@/calls/components/call-panel";
+import { useWebRTC } from "@/calls/hooks/use-webrtc";
 import ChatArea from "@/components/chat/chat-area";
 import Sidebar from "@/components/chat/sidebar";
 
@@ -346,6 +345,12 @@ export default function ChatPage() {
       setOnlineUsers(new Set(userIds));
     });
 
+    // New: notify about new activity in conversations even if not joined
+    newSocket.on("conversation_activity", ({ conversationId }: { conversationId: number }) => {
+      console.debug("[conversation_activity]", conversationId);
+      queryClient.invalidateQueries({ queryKey: ["/api/conversations"] });
+    });
+
     setSocket(newSocket);
 
     return () => {
@@ -357,6 +362,7 @@ export default function ChatPage() {
       newSocket.off("user_online");
       newSocket.off("user_offline");
       newSocket.off("online_users");
+      newSocket.off("conversation_activity");
       newSocket.disconnect();
     };
   }, [user?.id, userKeys?.publicKey, userKeys?.secretKey, selectedConversation, fetchPublicKey]); // Use primitive values only

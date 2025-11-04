@@ -3,6 +3,7 @@ import { ApolloServer } from "apollo-server-express";
 import { typeDefs } from "./graphql/schema";
 import { resolvers } from "./graphql/resolvers";
 import { registerRoutes } from "./routes";
+import { ensureSchema } from "./db";
 import { setupVite, serveStatic, log } from "./vite";
 
 const app = express();
@@ -40,6 +41,9 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Surface a helpful warning if DB schema is out-of-date (non-fatal)
+  await ensureSchema();
+
   const server = await registerRoutes(app);
 
   // Setup Apollo GraphQL Server

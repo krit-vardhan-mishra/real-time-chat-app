@@ -91,7 +91,7 @@ export default function ChatHeader({
                 variant="ghost"
                 size="icon"
                 onClick={(e) => e.stopPropagation()}
-                className="sm:hidden text-gray-400 hover:text-[#C9D1D9] hover:bg-[#30363D] h-8 w-8"
+                className="sm:hidden text-gray-400 hover:bg-[#30363D] h-8 w-8"
                 title="Call options"
               >
                 <Phone className="w-4 h-4" />
@@ -108,20 +108,20 @@ export default function ChatHeader({
                   e.stopPropagation();
                   if (userId && onStartAudioCall) onStartAudioCall(userId);
                 }}
-                className="flex items-center gap-2 px-3 py-2 hover:bg-[#0D1117] focus:bg-[#0D1117] cursor-pointer"
+                className="group flex items-center gap-2 px-3 py-2 hover:bg-[#0D1117] focus:bg-[#0D1117] cursor-pointer"
               >
-                <Phone className="w-4 h-4" />
-                <span>Audio call</span>
+                <Phone className="group-hover:text-[#ffffff] w-4 h-4 hover:scale-105" />
+                <span className="group-hover:text-[#ffffff] hover:scale-105">Audio call</span>
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={(e) => {
                   e.stopPropagation();
                   if (userId && onStartVideoCall) onStartVideoCall(userId);
                 }}
-                className="flex items-center gap-2 px-3 py-2 hover:bg-[#0D1117] focus:bg-[#0D1117] cursor-pointer"
+                className="group flex items-center gap-2 px-3 py-2 hover:bg-[#0D1117] focus:bg-[#0D1117] cursor-pointer"
               >
-                <Video className="w-4 h-4" />
-                <span>Video call</span>
+                <Video className="group-hover:text-[#ffffff] w-4 h-4 hover:scale-105" />
+                <span className="group-hover:text-[#ffffff] hover:scale-105">Video call</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

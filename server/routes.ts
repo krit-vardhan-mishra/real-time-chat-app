@@ -10,7 +10,7 @@ import {
   messages, 
   users,
 } from "@shared/schema";
-import { eq, and, or, inArray, desc, lt, ne } from "drizzle-orm";
+import { eq, and, or, inArray, desc, lt, ne, count } from "drizzle-orm";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   setupAuth(app);
@@ -40,6 +40,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const participants = await db
             .select({
               user: users,
+              state: conversationParticipants.state,
             })
             .from(conversationParticipants)
             .innerJoin(users, eq(conversationParticipants.userId, users.id))
@@ -53,6 +54,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .orderBy(desc(messages.createdAt))
             .limit(1);
 
+          // Compute unread status for the current user: any message not read and not sent by me
+          const [{ value: unreadCount } = { value: 0 }] = await db
+            .select({ value: count(messages.id) })
+            .from(messages)
+            .where(
+              and(
+                eq(messages.conversationId, conversation.id),
+                eq(messages.read, false),
+                ne(messages.senderId, userId)
+              )
+            );
+
           return {
             ...conversation,
             participants: participants.map(p => ({
@@ -60,8 +73,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
               username: p.user.username,
               fullName: p.user.fullName,
               avatar: p.user.avatar,
+              gender: p.user.gender,
+              state: p.state,
             })),
             lastMessage: lastMessage || null,
+            hasUnread: (unreadCount as unknown as number) > 0,
           };
         })
       );
@@ -125,14 +141,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Add participants
       await db.insert(conversationParticipants).values([
-        { conversationId: newConversation.id, userId: userId },
-        { conversationId: newConversation.id, userId: recipientId },
+        { conversationId: newConversation.id, userId: userId, state: 'accepted' },
+        { conversationId: newConversation.id, userId: recipientId, state: 'pending' },
       ]);
 
       res.json(newConversation);
     } catch (error) {
       console.error("Error creating conversation:", error);
       res.status(500).json({ message: "Failed to create conversation" });
+    }
+  });
+
+  // Accept or reject a new conversation request (for direct chats)
+  app.post("/api/conversations/:conversationId/decision", async (req, res) => {
+    try {
+      if (!req.isAuthenticated()) {
+        return res.status(401).json({ message: "Authentication required" });
+      }
+
+      const conversationId = parseInt(req.params.conversationId);
+      const userId = req.user!.id;
+      const { accept } = req.body as { accept: boolean };
+
+      // Verify the user is a participant
+      const [participant] = await db
+        .select()
+        .from(conversationParticipants)
+        .where(and(eq(conversationParticipants.conversationId, conversationId), eq(conversationParticipants.userId, userId)))
+        .limit(1);
+
+      if (!participant) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const newState = accept ? 'accepted' : 'blocked';
+      await db
+        .update(conversationParticipants)
+        .set({ state: newState })
+        .where(and(eq(conversationParticipants.conversationId, conversationId), eq(conversationParticipants.userId, userId)));
+
+      // Notify the other participant about the decision
+      try {
+        // Lazy import of io instance is not available here; emit handled in socket layer upon next message
+      } catch {}
+
+      res.json({ message: accept ? 'Conversation accepted' : 'Conversation blocked' });
+    } catch (error) {
+      console.error("Error updating conversation decision:", error);
+      res.status(500).json({ message: "Failed to update conversation" });
     }
   });
 

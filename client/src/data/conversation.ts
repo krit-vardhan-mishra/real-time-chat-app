@@ -10,6 +10,8 @@ interface Conversation {
     username: string;
     fullName?: string | null;
     avatar?: string | null;
+    gender?: string | null;
+    state?: 'accepted' | 'pending' | 'blocked';
   }>;
   lastMessage?: Message | null;
 }

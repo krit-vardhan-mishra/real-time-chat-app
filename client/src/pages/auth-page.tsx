@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MessageSquare, Eye, EyeOff, User } from "lucide-react";
 import Avatar from "react-nice-avatar";
+import { genConfig } from "react-nice-avatar";
 import AvatarEditor from "@/components/avatar-editor";
 
 interface AuthFormData {
@@ -61,8 +62,15 @@ export default function AuthPage() {
       if (state.isLogin) {
         await login(username, password);
       } else {
-        // Generate default avatar based on gender if not selected
-        const finalAvatar = data.avatar || (data.gender ? JSON.stringify({ sex: data.gender === "male" ? "man" : "woman" }) : "");
+        // If user didn't select an avatar, generate a full random avatar config
+        // based on gender (male -> man, female -> woman). If gender is not provided,
+        // generate a completely random avatar. Persist this to the database via register.
+        let finalAvatar = data.avatar;
+        if (!finalAvatar) {
+          const sex = data.gender === "male" ? "man" : data.gender === "female" ? "woman" : undefined;
+          const cfg = sex ? genConfig({ sex }) : genConfig();
+          finalAvatar = JSON.stringify(cfg);
+        }
         await register(username, password, data.fullName, data.email, finalAvatar, data.gender);
       }
       setLocation("/");

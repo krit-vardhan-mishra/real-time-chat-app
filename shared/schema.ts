@@ -43,6 +43,11 @@ export const conversationParticipants = pgTable("conversation_participants", {
   id: serial("id").primaryKey(),
   conversationId: integer("conversation_id").notNull().references(() => conversations.id, { onDelete: "cascade" }),
   userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  // Conversation state from this participant's perspective:
+  // 'accepted' -> normal chat
+  // 'pending'  -> awaiting this participant's approval to continue
+  // 'blocked'  -> this participant rejected; other cannot send further messages
+  state: text("state").notNull().default('accepted'),
   joinedAt: timestamp("joined_at").defaultNow().notNull(),
 });
 

@@ -7,12 +7,14 @@ interface ChatInputProps {
   messageInput: string;
   setMessageInput: (input: string) => void;
   handleSend: () => void;
+  disabled?: boolean;
 }
 
 export default function ChatInput({
   messageInput,
   setMessageInput,
   handleSend,
+  disabled = false,
 }: ChatInputProps) {
   return (
     // Responsive padding and minimum height is maintained
@@ -39,13 +41,15 @@ export default function ChatInput({
         placeholder="Type a message"
         value={messageInput}
         onChange={(e) => setMessageInput(e.target.value)}
-        onKeyPress={(e) => e.key === "Enter" && handleSend()}
+        onKeyPress={(e) => !disabled && e.key === "Enter" && handleSend()}
+        disabled={disabled}
         // flex-1 ensures the input takes up maximum available width
         className="flex-1 bg-[#0D1117] border border-[#30363D] text-[#C9D1D9] placeholder:text-gray-500 focus-visible:ring-1 focus-visible:ring-[#238636] rounded-lg h-9 sm:h-10 text-sm sm:text-base"
       />
       {messageInput.trim() ? (
         <Button
           onClick={handleSend}
+          disabled={disabled}
           size="icon"
           className="bg-[#238636] hover:bg-[#238636]/90 text-white rounded-full h-9 w-9 sm:h-10 sm:w-10 flex-shrink-0"
           title="Send Message"
@@ -56,6 +60,7 @@ export default function ChatInput({
         <Button
           variant="ghost"
           size="icon"
+          disabled={disabled}
           className="text-gray-400 hover:text-[#C9D1D9] hover:bg-[#30363D] h-9 w-9 sm:h-10 sm:w-10 flex-shrink-0"
           title="Record Voice Message"
         >

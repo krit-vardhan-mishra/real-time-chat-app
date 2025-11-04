@@ -37,6 +37,7 @@ interface Conversation {
     createdAt: string;
     senderId: number;
   } | null;
+  hasUnread?: boolean;
 }
 
 interface User {
@@ -176,7 +177,8 @@ const Sidebar = memo(function Sidebar({
       }
     }
 
-    return [...groups, ...Array.from(byOther.values())];
+    const allConversations = [...groups, ...Array.from(byOther.values())];
+    return allConversations.sort((a, b) => getWhen(b) - getWhen(a));
   }, [conversations, currentUser.id]);
 
   const filteredConversations = useMemo(() => {
@@ -475,12 +477,20 @@ const ConversationItem = memo(function ConversationItem({
         <div className="flex justify-between items-baseline mb-0.5 sm:mb-1">
           <h3 className="font-medium text-sm sm:text-base text-[#C9D1D9] truncate">{displayName}</h3>
           {conversation.lastMessage && (
-            <span className="text-[10px] sm:text-xs text-gray-500 flex-shrink-0 ml-2">
-              {new Date(conversation.lastMessage.createdAt).toLocaleTimeString([], {
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-            </span>
+            <div className="flex flex-col items-end flex-shrink-0 ml-2">
+              <span className="text-[10px] sm:text-xs text-gray-500">
+                {new Date(conversation.lastMessage.createdAt).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </span>
+              {conversation.hasUnread && (
+                <span
+                  className="mt-0.5 inline-block w-2 h-2 rounded-full bg-[#238636]"
+                  title="New message"
+                />
+              )}
+            </div>
           )}
         </div>
         {conversation.lastMessage && (

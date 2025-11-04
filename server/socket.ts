@@ -1,7 +1,7 @@
 import { Server as IOServer, Socket } from "socket.io";
 import { db } from "./db";
 import { messages, conversationParticipants } from "@shared/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, ne, count } from "drizzle-orm";
 
 interface SocketWithUser extends Socket {
   userId?: number;
@@ -109,6 +109,32 @@ export function setupSocket(io: IOServer) {
           return;
         }
 
+        // Fetch other participants to evaluate their states (pending/blocked)
+        const others = await db
+          .select({ userId: conversationParticipants.userId, state: conversationParticipants.state })
+          .from(conversationParticipants)
+          .where(and(eq(conversationParticipants.conversationId, conversationId), ne(conversationParticipants.userId, socket.userId)));
+
+        // If any participant has blocked, reject sending
+        const someoneBlocked = others.some(p => p.state === 'blocked');
+        if (someoneBlocked) {
+          socket.emit("error", { message: "The recipient has blocked this conversation" });
+          return;
+        }
+
+        // If others are pending, allow only the first message from this sender
+        const someonePending = others.some(p => p.state === 'pending');
+        if (someonePending) {
+          const [{ value: sentCount } = { value: 0 }] = await db
+            .select({ value: count(messages.id) })
+            .from(messages)
+            .where(and(eq(messages.conversationId, conversationId), eq(messages.senderId, socket.userId)));
+          if ((sentCount as unknown as number) >= 1) {
+            socket.emit("error", { message: "Please wait until the recipient accepts your request" });
+            return;
+          }
+        }
+
         // Store message
         const [newMessage] = await db
           .insert(messages)
@@ -130,6 +156,19 @@ export function setupSocket(io: IOServer) {
           read: false,
           createdAt: newMessage.createdAt,
         });
+
+        // Also notify participants' personal rooms to refresh conversation list
+        const allParticipants = await db
+          .select({ userId: conversationParticipants.userId })
+          .from(conversationParticipants)
+          .where(eq(conversationParticipants.conversationId, conversationId));
+
+        for (const p of allParticipants) {
+          io.to(`user:${p.userId}`).emit("conversation_activity", {
+            conversationId,
+            messageId: newMessage.id,
+          });
+        }
 
         console.log(
           `Message sent in conversation ${conversationId} by user ${socket.userId}`
