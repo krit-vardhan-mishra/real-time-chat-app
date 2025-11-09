@@ -1,3 +1,7 @@
+import { installConsoleInterceptor } from "@shared/setup-logging";
+
+// Ensure unified logging across the app
+installConsoleInterceptor();
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { ApolloProvider } from "@apollo/client/react";

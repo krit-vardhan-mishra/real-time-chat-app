@@ -1,10 +1,18 @@
 import express, { type Request, Response, NextFunction } from "express";
+import { installConsoleInterceptor } from "../shared/setup-logging";
 import { ApolloServer } from "apollo-server-express";
 import { typeDefs } from "./graphql/schema";
 import { resolvers } from "./graphql/resolvers";
 import { registerRoutes } from "./routes";
 import { ensureSchema } from "./db";
 import { setupVite, serveStatic, log } from "./vite";
+import dotenv from "dotenv";
+
+// Load environment variables first
+dotenv.config();
+
+// Install logging override as early as possible
+installConsoleInterceptor();
 
 const app = express();
 app.use(express.json());
@@ -41,59 +49,66 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  // Surface a helpful warning if DB schema is out-of-date (non-fatal)
-  await ensureSchema();
+  try {
+    // Surface a helpful warning if DB schema is out-of-date (non-fatal)
+    await ensureSchema();
 
-  const server = await registerRoutes(app);
+    const server = await registerRoutes(app);
 
-  // Setup Apollo GraphQL Server
-  const apolloServer = new ApolloServer({
-    typeDefs,
-    resolvers,
-    context: ({ req }: { req: Request }) => ({
-      userId: req.isAuthenticated() ? req.user?.id : undefined,
-      user: req.user,
-    }),
-    formatError: (err) => {
-      log(`GraphQL Error: ${err.message}`);
-      return err;
-    },
-  });
+    // Setup Apollo GraphQL Server
+    const apolloServer = new ApolloServer({
+      typeDefs,
+      resolvers,
+      context: ({ req }: { req: Request }) => ({
+        userId: req.isAuthenticated() ? req.user?.id : undefined,
+        user: req.user,
+      }),
+      formatError: (err) => {
+        log(`GraphQL Error: ${err.message}`);
+        return err;
+      },
+    });
 
-  await apolloServer.start();
-  apolloServer.applyMiddleware({ 
-    app: app as any, 
-    path: "/graphql",
-    cors: false, // Use express cors settings
-  });
+    await apolloServer.start();
+    apolloServer.applyMiddleware({ 
+      app: app as any, 
+      path: "/graphql",
+      cors: false, // Use express cors settings
+    });
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+    app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+      const status = err.status || err.statusCode || 500;
+      const message = err.message || "Internal Server Error";
 
-    res.status(status).json({ message });
-    throw err;
-  });
+      res.status(status).json({ message });
+      throw err;
+    });
 
-  // Setup Vite or serve static assets based on environment.
-  // In production, we skip Vite entirely to avoid importing the dependency.
-  if (process.env.NODE_ENV === "production") {
-    serveStatic(app);
-  } else {
-    try {
-      await setupVite(app, server);
-    } catch (err) {
-      // Log and fallback to static serving. This prevents deployment crashes
-      // when NODE_ENV isn't correctly set or devDependencies are missing.
-      log(`Vite setup failed, falling back to static serve: ${(err as Error).message}`);
+    // Setup Vite or serve static assets based on environment.
+    // In production, we skip Vite entirely to avoid importing the dependency.
+    if (process.env.NODE_ENV === "production") {
       serveStatic(app);
+    } else {
+      try {
+        await setupVite(app, server);
+      } catch (err) {
+        // Log and fallback to static serving. This prevents deployment crashes
+        // when NODE_ENV isn't correctly set or devDependencies are missing.
+        log(`Vite setup failed, falling back to static serve: ${(err as Error).message}`);
+        serveStatic(app);
+      }
     }
-  }
 
-  // Start the server on provided PORT (for PaaS) or fallback to 5000
-  const port = parseInt(process.env.PORT || "5000", 10);
-  server.listen(port, "0.0.0.0", () => {
-    log(`🚀 Server running on http://localhost:${port}`);
-    log(`Press Ctrl+C to exit.`);
-  });
+    // Start the server on provided PORT (for PaaS) or fallback to 5000
+    const port = parseInt(process.env.PORT || "5000", 10);
+    server.listen(port, "0.0.0.0", () => {
+      process.stdout.write(`\n🚀 Server running on http://localhost:${port}\n`);
+      process.stdout.write(`Press Ctrl+C to exit.\n\n`);
+      log(`🚀 Server running on http://localhost:${port}`);
+      log(`Press Ctrl+C to exit.`);
+    });
+  } catch (err) {
+    console.error("Fatal server error:", err);
+    process.exit(1);
+  }
 })();

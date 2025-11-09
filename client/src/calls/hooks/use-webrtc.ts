@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createLogger } from "@shared/logger";
 import type { Socket } from "socket.io-client";
 
 export type CallMedia = { audio: boolean; video: boolean };
@@ -21,13 +22,13 @@ const rtcConfig: RTCConfiguration = {
 };
 
 export function useWebRTC(socket: Socket | null, currentUserId: number | undefined) {
+  const logger = createLogger("WebRTC");
   const log = useCallback(
     (event: string, data?: unknown) => {
-      const ts = new Date().toISOString();
-      if (data !== undefined) console.debug(`[WebRTC ${ts}] ${event}`, data);
-      else console.debug(`[WebRTC ${ts}] ${event}`);
+      if (data !== undefined) logger.debug(event, data);
+      else logger.debug(event);
     },
-    []
+    [logger]
   );
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -195,7 +196,7 @@ export function useWebRTC(socket: Socket | null, currentUserId: number | undefin
         log("emit:call_user", { toUserId, mediaUsed });
         socket.emit("call_user", { toUserId, offer, media: mediaUsed });
       } catch (err) {
-        console.error("startCall error", err);
+        logger.error("startCall error", err);
         setCallState({ status: "ended", reason: "Could not start call" });
         setTimeout(() => setCallState({ status: "idle" }), 400);
       }
@@ -233,7 +234,7 @@ export function useWebRTC(socket: Socket | null, currentUserId: number | undefin
       socket.emit("answer_call", { toUserId: fromUserId, answer });
       setCallState({ status: "in-call", peerId: fromUserId, media: mediaUsed });
     } catch (err) {
-      console.error("acceptCall error", err);
+      logger.error("acceptCall error", err);
       setCallState({ status: "ended", reason: "Failed to accept call" });
       setTimeout(() => setCallState({ status: "idle" }), 400);
     }
@@ -269,7 +270,7 @@ export function useWebRTC(socket: Socket | null, currentUserId: number | undefin
       log("on:ice_candidate", { fromUserId: payload.fromUserId, candidate: payload.candidate?.candidate });
       const pc = pcRef.current;
       if (!pc) return;
-      try { await pc.addIceCandidate(new RTCIceCandidate(payload.candidate)); log("pc.addIceCandidate ok"); } catch (e) { console.warn("addIceCandidate failed", e); }
+  try { await pc.addIceCandidate(new RTCIceCandidate(payload.candidate)); log("pc.addIceCandidate ok"); } catch (e) { logger.warn("addIceCandidate failed", e); }
     };
 
     const onCallEnded = () => {

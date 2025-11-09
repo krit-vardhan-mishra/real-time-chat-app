@@ -1,4 +1,5 @@
 import { Server as IOServer, Socket } from "socket.io";
+import { createLogger } from "../shared/logger";
 import { db } from "./db";
 import { messages, conversationParticipants } from "@shared/schema";
 import { eq, and, ne, count } from "drizzle-orm";
@@ -15,8 +16,9 @@ const onlineUsers = new Set<number>();
  * The server only stores and relays ciphertext—it never decrypts.
  */
 export function setupSocket(io: IOServer) {
+  const log = createLogger("socket");
   io.on("connection", (socket: SocketWithUser) => {
-    console.log("User connected:", socket.id);
+    log.info("User connected:", socket.id);
     
     // Auto-authenticate from socket auth
     const userId = (socket.handshake.auth as any).userId;
@@ -28,7 +30,7 @@ export function setupSocket(io: IOServer) {
       io.emit("user_online", { userId });
       // Send current online users to the newly connected user
       socket.emit("online_users", Array.from(onlineUsers));
-      console.log(`User ${userId} authenticated on connection`);
+  log.info(`User ${userId} authenticated on connection`);
     }
 
     // Step 1: authenticate socket connection (backup)
@@ -40,7 +42,7 @@ export function setupSocket(io: IOServer) {
       io.emit("user_online", { userId });
       // Send current online users to the newly connected user
       socket.emit("online_users", Array.from(onlineUsers));
-      console.log(`User ${userId} authenticated and joined personal room`);
+  log.info(`User ${userId} authenticated and joined personal room`);
     });
 
     // Step 2: join conversation
@@ -67,9 +69,9 @@ export function setupSocket(io: IOServer) {
         }
 
         socket.join(`conversation:${conversationId}`);
-        console.log(`User ${socket.userId} joined conversation ${conversationId}`);
+        log.info(`User ${socket.userId} joined conversation ${conversationId}`);
       } catch (error) {
-        console.error("Error joining conversation:", error);
+        log.error("Error joining conversation:", error);
         socket.emit("error", { message: "Failed to join conversation" });
       }
     });
@@ -77,7 +79,7 @@ export function setupSocket(io: IOServer) {
     // Step 3: leave conversation
     socket.on("leave_conversation", (conversationId: number) => {
       socket.leave(`conversation:${conversationId}`);
-      console.log(`User ${socket.userId} left conversation ${conversationId}`);
+  log.info(`User ${socket.userId} left conversation ${conversationId}`);
     });
 
     // Step 4: send message (just relay encrypted data)
@@ -170,11 +172,11 @@ export function setupSocket(io: IOServer) {
           });
         }
 
-        console.log(
+        log.info(
           `Message sent in conversation ${conversationId} by user ${socket.userId}`
         );
       } catch (error) {
-        console.error("Error sending message:", error);
+        log.error("Error sending message:", error);
         socket.emit("error", { message: "Failed to send message" });
       }
     });
@@ -204,14 +206,14 @@ export function setupSocket(io: IOServer) {
         try {
           if (!socket.userId) return socket.emit("error", { message: "Not authenticated" });
           const { toUserId, offer, media } = payload;
-          console.log("[signaling] call_user", { fromUserId: socket.userId, toUserId, media, hasSdp: !!offer?.type });
+          log.info("[signaling] call_user", { fromUserId: socket.userId, toUserId, media, hasSdp: !!offer?.type });
           io.to(`user:${toUserId}`).emit("incoming_call", {
             fromUserId: socket.userId,
             offer,
             media,
           });
         } catch (err) {
-          console.error("call_user error:", err);
+          log.error("call_user error:", err);
           socket.emit("error", { message: "Failed to initiate call" });
         }
       }
@@ -224,13 +226,13 @@ export function setupSocket(io: IOServer) {
         try {
           if (!socket.userId) return socket.emit("error", { message: "Not authenticated" });
           const { toUserId, answer } = payload;
-          console.log("[signaling] answer_call", { fromUserId: socket.userId, toUserId, hasSdp: !!answer?.type });
+          log.info("[signaling] answer_call", { fromUserId: socket.userId, toUserId, hasSdp: !!answer?.type });
           io.to(`user:${toUserId}`).emit("call_answer", {
             fromUserId: socket.userId,
             answer,
           });
         } catch (err) {
-          console.error("answer_call error:", err);
+          log.error("answer_call error:", err);
           socket.emit("error", { message: "Failed to answer call" });
         }
       }
@@ -241,13 +243,13 @@ export function setupSocket(io: IOServer) {
       try {
         if (!socket.userId) return socket.emit("error", { message: "Not authenticated" });
         const { toUserId, reason } = payload;
-        console.log("[signaling] reject_call", { fromUserId: socket.userId, toUserId, reason });
+          log.info("[signaling] reject_call", { fromUserId: socket.userId, toUserId, reason });
         io.to(`user:${toUserId}`).emit("call_rejected", {
           fromUserId: socket.userId,
           reason,
         });
       } catch (err) {
-        console.error("reject_call error:", err);
+          log.error("reject_call error:", err);
       }
     });
 
@@ -258,13 +260,13 @@ export function setupSocket(io: IOServer) {
         try {
           if (!socket.userId) return socket.emit("error", { message: "Not authenticated" });
           const { toUserId, candidate } = payload;
-          console.log("[signaling] ice_candidate", { fromUserId: socket.userId, toUserId, hasCandidate: !!candidate?.candidate });
+            log.info("[signaling] ice_candidate", { fromUserId: socket.userId, toUserId, hasCandidate: !!candidate?.candidate });
           io.to(`user:${toUserId}`).emit("ice_candidate", {
             fromUserId: socket.userId,
             candidate,
           });
         } catch (err) {
-          console.error("ice_candidate error:", err);
+            log.error("ice_candidate error:", err);
         }
       }
     );
@@ -274,12 +276,12 @@ export function setupSocket(io: IOServer) {
       try {
         if (!socket.userId) return socket.emit("error", { message: "Not authenticated" });
         const { toUserId } = payload;
-        console.log("[signaling] end_call", { fromUserId: socket.userId, toUserId });
+        log.info("[signaling] end_call", { fromUserId: socket.userId, toUserId });
         io.to(`user:${toUserId}`).emit("call_ended", {
           fromUserId: socket.userId,
         });
       } catch (err) {
-        console.error("end_call error:", err);
+        log.error("end_call error:", err);
       }
     });
 
@@ -306,12 +308,12 @@ export function setupSocket(io: IOServer) {
             messageId: updatedMessage.id,
           });
 
-          console.log(
+          log.info(
             `Message ${messageId} marked as read by user ${socket.userId}`
           );
         }
       } catch (error) {
-        console.error("Error marking message as read:", error);
+        log.error("Error marking message as read:", error);
         socket.emit("error", { message: "Failed to mark message as read" });
       }
     });
@@ -322,7 +324,7 @@ export function setupSocket(io: IOServer) {
         // Notify all clients about user going offline
         io.emit("user_offline", { userId: socket.userId });
       }
-      console.log("User disconnected:", socket.id);
+  log.info("User disconnected:", socket.id);
     });
   });
 }
