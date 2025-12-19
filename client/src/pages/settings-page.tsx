@@ -9,6 +9,7 @@ import { ArrowLeft, Save, Bell, Shield, Palette } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
+import KeyManagement from "@/components/key-management";
 
 interface SettingsPageProps {
   onClose: () => void;
@@ -194,6 +195,11 @@ export default function SettingsPage({ onClose }: SettingsPageProps) {
               </div>
             </div>
           </div>
+
+          <Separator className="bg-[#30363D]" />
+
+          {/* Encryption Keys */}
+          <KeyManagement />
 
           <Separator className="bg-[#30363D]" />
 
