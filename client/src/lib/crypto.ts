@@ -246,3 +246,131 @@ export async function downloadEncryptedKeys(password: string): Promise<void> {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+// ============ PIN-Based Key Recovery (Server Storage) ============
+
+export interface KeyBundle {
+  publicKey: string;
+  encryptedSecretKey: string;
+  salt: string;
+  iv: string;
+}
+
+// Create encrypted key bundle for server storage
+export async function createKeyBundle(pin: string): Promise<KeyBundle> {
+  const keys = getKeys();
+  if (!keys) {
+    throw new Error("No keys to export");
+  }
+
+  // Generate random salt and IV
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+
+  // Derive encryption key from PIN
+  const encryptionKey = await deriveKeyFromPassword(pin, salt);
+
+  // Encrypt the secret key
+  const encoder = new TextEncoder();
+  const encryptedBuffer = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    encryptionKey,
+    encoder.encode(keys.secretKey)
+  );
+
+  return {
+    publicKey: keys.publicKey,
+    encryptedSecretKey: encodeBase64(new Uint8Array(encryptedBuffer)),
+    salt: encodeBase64(salt),
+    iv: encodeBase64(iv),
+  };
+}
+
+// Decrypt key bundle from server using PIN
+export async function decryptKeyBundle(
+  bundle: KeyBundle,
+  pin: string
+): Promise<{ publicKey: string; secretKey: string }> {
+  const salt = decodeBase64(bundle.salt);
+  const iv = decodeBase64(bundle.iv);
+  const encryptedData = decodeBase64(bundle.encryptedSecretKey);
+
+  // Derive decryption key from PIN
+  const decryptionKey = await deriveKeyFromPassword(pin, salt);
+
+  try {
+    const decryptedBuffer = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv },
+      decryptionKey,
+      encryptedData
+    );
+
+    const decoder = new TextDecoder();
+    const secretKey = decoder.decode(decryptedBuffer);
+
+    // Store the recovered keys
+    const keys = { publicKey: bundle.publicKey, secretKey };
+    storeKeys(keys.publicKey, keys.secretKey);
+
+    return keys;
+  } catch {
+    throw new Error("Invalid PIN");
+  }
+}
+
+// Upload key bundle to server
+export async function uploadKeyBundle(pin: string): Promise<void> {
+  const bundle = await createKeyBundle(pin);
+
+  const res = await fetch("/api/user/key-bundle", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(bundle),
+    credentials: "include",
+  });
+
+  if (!res.ok) {
+    throw new Error("Failed to upload key bundle");
+  }
+}
+
+// Fetch and decrypt key bundle from server
+export async function recoverKeysFromServer(pin: string): Promise<boolean> {
+  const res = await fetch("/api/user/key-bundle", {
+    credentials: "include",
+  });
+
+  if (res.status === 404) {
+    return false; // No key bundle exists
+  }
+
+  if (!res.ok) {
+    throw new Error("Failed to fetch key bundle");
+  }
+
+  const bundle = await res.json();
+  if (!bundle.hasKeyBundle) {
+    return false;
+  }
+
+  await decryptKeyBundle(bundle, pin);
+  return true;
+}
+
+// Check if server has key bundle for current user
+export async function hasServerKeyBundle(): Promise<boolean> {
+  try {
+    const res = await fetch("/api/user/key-bundle", {
+      credentials: "include",
+    });
+
+    if (res.status === 404) {
+      return false;
+    }
+
+    const data = await res.json();
+    return data.hasKeyBundle === true;
+  } catch {
+    return false;
+  }
+}

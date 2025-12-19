@@ -9,7 +9,7 @@ import { ArrowLeft, Save, Bell, Shield, Palette } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
-import KeyManagement from "@/components/key-management";
+import { Key } from "lucide-react";
 
 interface SettingsPageProps {
   onClose: () => void;
@@ -199,7 +199,16 @@ export default function SettingsPage({ onClose }: SettingsPageProps) {
           <Separator className="bg-[#30363D]" />
 
           {/* Encryption Keys */}
-          <KeyManagement />
+          <div>
+            <h3 className="text-lg font-medium text-[#C9D1D9] mb-4 flex items-center">
+              <Key className="w-5 h-5 mr-2" />
+              Encryption
+            </h3>
+            <p className="text-sm text-gray-400">
+              Your encryption keys are automatically synced across devices using your recovery PIN.
+              When you login on a new device, you'll be prompted to enter your PIN to recover your keys.
+            </p>
+          </div>
 
           <Separator className="bg-[#30363D]" />
 

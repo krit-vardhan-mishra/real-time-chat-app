@@ -4,10 +4,10 @@ import { Server as IOServer } from "socket.io";
 import { setupAuth } from "./auth";
 import { setupSocket } from "./socket";
 import { db } from "./db";
-import { 
-  conversations, 
-  conversationParticipants, 
-  messages, 
+import {
+  conversations,
+  conversationParticipants,
+  messages,
   users,
 } from "@shared/schema";
 import { eq, and, or, inArray, desc, lt, ne, count } from "drizzle-orm";
@@ -31,7 +31,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           participant: conversationParticipants,
         })
         .from(conversationParticipants)
-        .innerJoin(conversations, eq(conversationParticipants.conversationId, conversations.id))
+        .innerJoin(
+          conversations,
+          eq(conversationParticipants.conversationId, conversations.id)
+        )
         .where(eq(conversationParticipants.userId, userId));
 
       // Get the other participants for each conversation
@@ -44,7 +47,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             })
             .from(conversationParticipants)
             .innerJoin(users, eq(conversationParticipants.userId, users.id))
-            .where(eq(conversationParticipants.conversationId, conversation.id));
+            .where(
+              eq(conversationParticipants.conversationId, conversation.id)
+            );
 
           // Get last message
           const [lastMessage] = await db
@@ -68,7 +73,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
           return {
             ...conversation,
-            participants: participants.map(p => ({
+            participants: participants.map((p) => ({
               id: p.user.id,
               username: p.user.username,
               fullName: p.user.fullName,
@@ -109,7 +114,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .from(conversationParticipants)
         .where(eq(conversationParticipants.userId, userId));
 
-      const conversationIds = existingConversations.map(c => c.conversationId);
+      const conversationIds = existingConversations.map(
+        (c) => c.conversationId
+      );
 
       if (conversationIds.length > 0) {
         const sharedConversation = await db
@@ -141,8 +148,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Add participants
       await db.insert(conversationParticipants).values([
-        { conversationId: newConversation.id, userId: userId, state: 'accepted' },
-        { conversationId: newConversation.id, userId: recipientId, state: 'pending' },
+        {
+          conversationId: newConversation.id,
+          userId: userId,
+          state: "accepted",
+        },
+        {
+          conversationId: newConversation.id,
+          userId: recipientId,
+          state: "pending",
+        },
       ]);
 
       res.json(newConversation);
@@ -167,25 +182,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const [participant] = await db
         .select()
         .from(conversationParticipants)
-        .where(and(eq(conversationParticipants.conversationId, conversationId), eq(conversationParticipants.userId, userId)))
+        .where(
+          and(
+            eq(conversationParticipants.conversationId, conversationId),
+            eq(conversationParticipants.userId, userId)
+          )
+        )
         .limit(1);
 
       if (!participant) {
         return res.status(403).json({ message: "Access denied" });
       }
 
-      const newState = accept ? 'accepted' : 'blocked';
+      const newState = accept ? "accepted" : "blocked";
       await db
         .update(conversationParticipants)
         .set({ state: newState })
-        .where(and(eq(conversationParticipants.conversationId, conversationId), eq(conversationParticipants.userId, userId)));
+        .where(
+          and(
+            eq(conversationParticipants.conversationId, conversationId),
+            eq(conversationParticipants.userId, userId)
+          )
+        );
 
       // Notify the other participant about the decision
       try {
         // Lazy import of io instance is not available here; emit handled in socket layer upon next message
       } catch {}
 
-      res.json({ message: accept ? 'Conversation accepted' : 'Conversation blocked' });
+      res.json({
+        message: accept ? "Conversation accepted" : "Conversation blocked",
+      });
     } catch (error) {
       console.error("Error updating conversation decision:", error);
       res.status(500).json({ message: "Failed to update conversation" });
@@ -202,7 +229,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const conversationId = parseInt(req.params.conversationId);
       const userId = req.user!.id;
       const limit = parseInt(req.query.limit as string) || 50; // Default 50 messages
-      const before = req.query.before ? parseInt(req.query.before as string) : undefined; // Message ID to load before
+      const before = req.query.before
+        ? parseInt(req.query.before as string)
+        : undefined; // Message ID to load before
 
       // Verify user is part of the conversation
       const [participant] = await db
@@ -320,12 +349,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { publicKey } = req.body;
 
       if (!publicKey) {
-        console.log(`⚠️ Public key upload failed for user ${userId}: No public key provided`);
+        console.log(
+          `⚠️ Public key upload failed for user ${userId}: No public key provided`
+        );
         return res.status(400).json({ message: "Public key is required" });
       }
 
       console.log(`📝 Updating public key for user ${userId}...`);
-      
+
       await db
         .update(users)
         .set({ identityPublicKey: publicKey })
@@ -334,7 +365,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`✅ Public key uploaded successfully for user ${userId}`);
       res.json({ message: "Public key set successfully" });
     } catch (error) {
-      console.error(`❌ Error setting public key for user ${req.user?.id}:`, error);
+      console.error(
+        `❌ Error setting public key for user ${req.user?.id}:`,
+        error
+      );
       res.status(500).json({ message: "Failed to set public key" });
     }
   });
@@ -348,24 +382,102 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const userId = req.user!.id;
       const [user] = await db
-        .select({ 
-          id: users.id, 
+        .select({
+          id: users.id,
           username: users.username,
-          identityPublicKey: users.identityPublicKey 
+          identityPublicKey: users.identityPublicKey,
         })
         .from(users)
         .where(eq(users.id, userId))
         .limit(1);
 
-      res.json({ 
+      res.json({
         userId: user.id,
         username: user.username,
         hasPublicKey: !!user.identityPublicKey,
-        publicKeyLength: user.identityPublicKey?.length || 0
+        publicKeyLength: user.identityPublicKey?.length || 0,
       });
     } catch (error) {
       console.error("Error checking public key status:", error);
       res.status(500).json({ message: "Failed to check public key status" });
+    }
+  });
+
+  // Store encrypted key bundle (for cross-device key recovery)
+  app.post("/api/user/key-bundle", async (req, res) => {
+    try {
+      if (!req.isAuthenticated()) {
+        return res.status(401).json({ message: "Authentication required" });
+      }
+
+      const userId = req.user!.id;
+      const { publicKey, encryptedSecretKey, salt, iv } = req.body;
+
+      if (!publicKey || !encryptedSecretKey || !salt || !iv) {
+        return res
+          .status(400)
+          .json({ message: "Missing required key bundle fields" });
+      }
+
+      console.log(`🔐 Storing encrypted key bundle for user ${userId}...`);
+
+      await db
+        .update(users)
+        .set({
+          identityPublicKey: publicKey,
+          encryptedSecretKey,
+          keySalt: salt,
+          keyIv: iv,
+        })
+        .where(eq(users.id, userId));
+
+      console.log(`✅ Key bundle stored successfully for user ${userId}`);
+      res.json({ message: "Key bundle stored successfully" });
+    } catch (error) {
+      console.error(
+        `❌ Error storing key bundle for user ${req.user?.id}:`,
+        error
+      );
+      res.status(500).json({ message: "Failed to store key bundle" });
+    }
+  });
+
+  // Get encrypted key bundle (for key recovery on new device)
+  app.get("/api/user/key-bundle", async (req, res) => {
+    try {
+      if (!req.isAuthenticated()) {
+        return res.status(401).json({ message: "Authentication required" });
+      }
+
+      const userId = req.user!.id;
+      const [user] = await db
+        .select({
+          identityPublicKey: users.identityPublicKey,
+          encryptedSecretKey: users.encryptedSecretKey,
+          keySalt: users.keySalt,
+          keyIv: users.keyIv,
+        })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+
+      if (!user.encryptedSecretKey) {
+        return res.status(404).json({
+          message: "No key bundle found",
+          hasKeyBundle: false,
+        });
+      }
+
+      res.json({
+        hasKeyBundle: true,
+        publicKey: user.identityPublicKey,
+        encryptedSecretKey: user.encryptedSecretKey,
+        salt: user.keySalt,
+        iv: user.keyIv,
+      });
+    } catch (error) {
+      console.error("Error retrieving key bundle:", error);
+      res.status(500).json({ message: "Failed to retrieve key bundle" });
     }
   });
 
@@ -419,7 +531,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   const httpServer = createServer(app);
-  
+
   // Setup Socket.IO
   const io = new IOServer(httpServer, {
     cors: {

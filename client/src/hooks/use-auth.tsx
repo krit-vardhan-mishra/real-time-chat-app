@@ -1,7 +1,15 @@
-import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
-import { storeKeys, generateKeyPair, getKeys } from "@/lib/crypto";
+import {
+  storeKeys,
+  generateKeyPair,
+  getKeys,
+  uploadKeyBundle,
+  recoverKeysFromServer,
+  hasServerKeyBundle
+} from "@/lib/crypto";
+import RecoveryPinDialog from "@/components/recovery-pin-dialog";
 
 interface User {
   id: number;
@@ -20,13 +28,50 @@ interface AuthContextType {
   logout: () => Promise<void>;
 }
 
+type PinDialogState =
+  | { show: false }
+  | { show: true; mode: "create" | "recover"; isLoading: boolean; error: string | null };
+
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const [pinDialog, setPinDialog] = useState<PinDialogState>({ show: false });
+  const [pendingAuth, setPendingAuth] = useState<"login" | "register" | null>(null);
+
   const { data: user, isLoading } = useQuery<User>({
     queryKey: ["/api/user"],
     retry: false,
   });
+
+  // Handle PIN submission for key recovery/creation
+  const handlePinSubmit = async (pin: string) => {
+    if (!pinDialog.show) return;
+
+    setPinDialog({ ...pinDialog, isLoading: true, error: null });
+
+    try {
+      if (pinDialog.mode === "create") {
+        // Create key bundle and upload to server
+        await uploadKeyBundle(pin);
+        console.log("✅ Key bundle created and uploaded");
+      } else {
+        // Recover keys from server
+        const recovered = await recoverKeysFromServer(pin);
+        if (!recovered) {
+          throw new Error("No key bundle found on server");
+        }
+        console.log("✅ Keys recovered from server");
+      }
+
+      // Close dialog and refresh user data
+      setPinDialog({ show: false });
+      setPendingAuth(null);
+      await queryClient.invalidateQueries({ queryKey: ["/api/user"] });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to process PIN";
+      setPinDialog({ ...pinDialog, isLoading: false, error: message });
+    }
+  };
 
   const loginMutation = useMutation({
     mutationFn: async ({ username, password }: { username: string; password: string }) => {
@@ -45,47 +90,67 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return res.json();
     },
     onSuccess: async () => {
-      console.log("🔐 Login successful - starting key upload process...");
-      
-      // Wait a bit for session to be established
+      console.log("🔐 Login successful - checking key status...");
+
+      // Wait for session to be established
       await new Promise(resolve => setTimeout(resolve, 100));
-      
-      // Generate or get encryption keys
-      let keys = getKeys();
-      if (!keys) {
-        console.log("🔑 No existing keys found - generating new keys...");
-        keys = generateKeyPair();
-        storeKeys(keys.publicKey, keys.secretKey);
-        console.log("✅ New keys generated and stored in localStorage");
-      } else {
-        console.log("✅ Found existing keys in localStorage");
-      }
-      
-      // Always upload public key to server on every login
-      // This ensures the database is always up-to-date
-      console.log("📤 Uploading public key to server...");
-      try {
-        const res = await fetch("/api/user/public-key", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ publicKey: keys.publicKey }),
-          credentials: "include",
-        });
-        
-        if (!res.ok) {
-          const errorText = await res.text();
-          console.error("❌ Failed to upload public key - Status:", res.status, "Error:", errorText);
-        } else {
-          const result = await res.json();
-          console.log("✅ Public key uploaded successfully:", result.message);
+
+      // Check if we have local keys
+      const localKeys = getKeys();
+
+      if (localKeys) {
+        // We have local keys - upload to ensure server is in sync
+        console.log("✅ Found local keys, syncing with server...");
+        try {
+          const res = await fetch("/api/user/public-key", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ publicKey: localKeys.publicKey }),
+            credentials: "include",
+          });
+          if (res.ok) {
+            console.log("✅ Public key synced with server");
+          }
+        } catch (e) {
+          console.warn("Failed to sync public key:", e);
         }
-      } catch (error) {
-        console.error("❌ Exception during public key upload:", error);
+
+        await queryClient.invalidateQueries({ queryKey: ["/api/user"] });
+        await queryClient.refetchQueries({ queryKey: ["/api/user"] });
+      } else {
+        // No local keys - check if server has key bundle
+        console.log("🔑 No local keys found, checking server for key bundle...");
+        const hasBundle = await hasServerKeyBundle();
+
+        if (hasBundle) {
+          // Server has keys - show recovery PIN dialog
+          console.log("🔐 Server has key bundle, requesting recovery PIN...");
+          setPendingAuth("login");
+          setPinDialog({ show: true, mode: "recover", isLoading: false, error: null });
+        } else {
+          // No keys anywhere - generate new and prompt for PIN
+          console.log("🔑 No keys found anywhere, generating new keys...");
+          const newKeys = generateKeyPair();
+          storeKeys(newKeys.publicKey, newKeys.secretKey);
+
+          // Upload public key immediately
+          try {
+            await fetch("/api/user/public-key", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ publicKey: newKeys.publicKey }),
+              credentials: "include",
+            });
+          } catch (e) {
+            console.warn("Failed to upload public key:", e);
+          }
+
+          // Show PIN creation dialog
+          console.log("🔐 Requesting PIN to secure keys...");
+          setPendingAuth("login");
+          setPinDialog({ show: true, mode: "create", isLoading: false, error: null });
+        }
       }
-      
-      // Refetch user data immediately after successful login
-      await queryClient.invalidateQueries({ queryKey: ["/api/user"] });
-      await queryClient.refetchQueries({ queryKey: ["/api/user"] });
     },
   });
 
@@ -105,42 +170,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       return res.json();
     },
-    onSuccess: async (data) => {
-      console.log("🔐 Registration successful - starting key generation...");
-      
-      // Wait a bit for session to be established
+    onSuccess: async () => {
+      console.log("🔐 Registration successful - generating keys...");
+
+      // Wait for session to be established
       await new Promise(resolve => setTimeout(resolve, 100));
-      
-      // Generate client-side encryption keys
-      console.log("🔑 Generating new encryption keys...");
+
+      // Generate new encryption keys
       const clientKeys = generateKeyPair();
       storeKeys(clientKeys.publicKey, clientKeys.secretKey);
-      console.log("✅ Keys generated and stored in localStorage");
-      
-      // Send public key to server
-      console.log("📤 Uploading public key to server...");
+      console.log("✅ Keys generated and stored");
+
+      // Upload public key immediately
       try {
-        const res = await fetch("/api/user/public-key", {
+        await fetch("/api/user/public-key", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ publicKey: clientKeys.publicKey }),
           credentials: "include",
         });
-        
-        if (!res.ok) {
-          const errorText = await res.text();
-          console.error("❌ Failed to upload public key during registration - Status:", res.status, "Error:", errorText);
-        } else {
-          const result = await res.json();
-          console.log("✅ Public key uploaded successfully during registration:", result.message);
-        }
-      } catch (error) {
-        console.error("❌ Exception during public key upload (registration):", error);
+        console.log("✅ Public key uploaded");
+      } catch (e) {
+        console.warn("Failed to upload public key:", e);
       }
-      
-      // Refetch user data immediately after successful registration
-      await queryClient.invalidateQueries({ queryKey: ["/api/user"] });
-      await queryClient.refetchQueries({ queryKey: ["/api/user"] });
+
+      // Show PIN creation dialog
+      console.log("🔐 Requesting PIN to secure keys...");
+      setPendingAuth("register");
+      setPinDialog({ show: true, mode: "create", isLoading: false, error: null });
     },
   });
 
@@ -158,9 +215,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return res.json();
     },
     onSuccess: () => {
-      // Clear all queries from the cache
       queryClient.clear();
-      // Set the user query to null explicitly
       queryClient.setQueryData(["/api/user"], null);
     },
   });
@@ -180,6 +235,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <AuthContext.Provider value={{ user: user || null, isLoading, login, register, logout }}>
       {children}
+
+      {/* Recovery PIN Dialog */}
+      {pinDialog.show && (
+        <RecoveryPinDialog
+          mode={pinDialog.mode}
+          onSubmit={handlePinSubmit}
+          isLoading={pinDialog.isLoading}
+          error={pinDialog.error}
+        />
+      )}
     </AuthContext.Provider>
   );
 }
@@ -187,10 +252,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 export function useAuth() {
   const context = useContext(AuthContext);
   if (context === undefined) {
-    // In some edge cases (HMR/react-refresh or async navigation) a hook may be
-    // invoked before the provider is mounted. Rather than crashing the app,
-    // return a safe fallback context and log a warning. The provider will
-    // replace this when it mounts.
     console.warn("useAuth called outside AuthProvider — returning fallback (isLoading: true)");
     return {
       user: null,
