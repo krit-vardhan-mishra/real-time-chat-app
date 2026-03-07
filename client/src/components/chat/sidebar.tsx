@@ -59,6 +59,7 @@ interface SidebarProps {
   onHelpClick?: () => void;
   onCreateConversation: (userId: number) => Promise<void>;
   isLoadingConversations?: boolean;
+  onlineUsers?: Set<number>;
 }
 
 const Sidebar = memo(function Sidebar({
@@ -72,6 +73,7 @@ const Sidebar = memo(function Sidebar({
   onHelpClick,
   onCreateConversation,
   isLoadingConversations,
+  onlineUsers = new Set(),
 }: SidebarProps) {
   const [localSearchQuery, setLocalSearchQuery] = useState("");
   const [isSearchMode, setIsSearchMode] = useState(false);
@@ -372,6 +374,7 @@ const Sidebar = memo(function Sidebar({
                       isSelected={selectedId === conv.id}
                       onSelect={onSelect}
                       currentUserId={currentUser.id}
+                      onlineUsers={onlineUsers}
                     />
                   );
                 })
@@ -421,6 +424,7 @@ const Sidebar = memo(function Sidebar({
                     isSelected={selectedId === conv.id}
                     onSelect={onSelect}
                     currentUserId={currentUser.id}
+                    onlineUsers={onlineUsers}
                   />
                 );
               })
@@ -439,6 +443,7 @@ const ConversationItem = memo(function ConversationItem({
   isSelected,
   onSelect,
   currentUserId,
+  onlineUsers = new Set(),
 }: {
   conversation: Conversation;
   displayName: string;
@@ -446,12 +451,14 @@ const ConversationItem = memo(function ConversationItem({
   isSelected: boolean;
   onSelect: (id: number) => void;
   currentUserId: number;
+  onlineUsers?: Set<number>;
 }) {
   // Determine if this is a pending request for the current user
   const myParticipant = conversation.participants.find(p => p.id === currentUserId);
   const otherParticipant = conversation.participants.find(p => p.id !== currentUserId);
   const isPendingForMe = myParticipant?.state === 'pending';
   const isRequestFromMe = otherParticipant?.state === 'pending';
+  const isOtherOnline = otherParticipant ? onlineUsers.has(otherParticipant.id) : false;
   const getDisplayMessage = () => {
     if (!conversation.lastMessage?.content) return "";
 
@@ -482,6 +489,10 @@ const ConversationItem = memo(function ConversationItem({
     >
       <div className="relative">
         <Avatar className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex-shrink-0" {...avatarConfig} />
+        {/* Online indicator */}
+        {isOtherOnline && !isPendingForMe && (
+          <div className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-green-500 border-2 border-[#0D1117]" title="Online" />
+        )}
         {/* Pending request indicator */}
         {isPendingForMe && (
           <div className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-yellow-500 border-2 border-[#0D1117]" title="Chat request" />

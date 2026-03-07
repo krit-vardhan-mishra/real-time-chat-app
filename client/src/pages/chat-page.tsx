@@ -681,6 +681,7 @@ export default function ChatPage() {
           onHelpClick={handleHelpClick}
           onCreateConversation={handleCreateConversation}
           isLoadingConversations={isLoadingConversations}
+          onlineUsers={onlineUsers}
         />
       </div>
 

@@ -63,15 +63,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.log("✅ Keys recovered from server");
       }
 
-      // Close dialog and refresh user data
+      // Close dialog
       setPinDialog({ show: false });
       setPendingAuth(null);
-      await queryClient.invalidateQueries({ queryKey: ["/api/user"] });
+
+      // Refetch (not invalidate) — keeps existing user data in cache while re-validating,
+      // which prevents ProtectedRoute from seeing a null user and redirecting to /auth.
+      await queryClient.refetchQueries({ queryKey: ["/api/user"] });
+
+      // Navigate to chat if not already there
+      if (window.location.pathname !== "/") {
+        window.location.href = "/";
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to process PIN";
       setPinDialog({ ...pinDialog, isLoading: false, error: message });
     }
   };
+
 
   const loginMutation = useMutation({
     mutationFn: async ({ username, password }: { username: string; password: string }) => {
@@ -115,7 +124,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           console.warn("Failed to sync public key:", e);
         }
 
-        await queryClient.invalidateQueries({ queryKey: ["/api/user"] });
         await queryClient.refetchQueries({ queryKey: ["/api/user"] });
       } else {
         // No local keys - check if server has key bundle
