@@ -50,10 +50,22 @@ app.use((req, res, next) => {
 
 (async () => {
   try {
+    const server = await registerRoutes(app);
+
+    // Bind to port FIRST so the process is reachable (required by PaaS like Render)
+    // before any async initialization that might fail.
+    const port = parseInt(process.env.PORT || "5000", 10);
+    await new Promise<void>((resolve) => {
+      server.listen(port, "0.0.0.0", () => {
+        process.stdout.write(`\n🚀 Server running on http://localhost:${port}\n`);
+        process.stdout.write(`Press Ctrl+C to exit.\n\n`);
+        log(`🚀 Server running on http://localhost:${port}`);
+        resolve();
+      });
+    });
+
     // Surface a helpful warning if DB schema is out-of-date (non-fatal)
     await ensureSchema();
-
-    const server = await registerRoutes(app);
 
     // Setup Apollo GraphQL Server
     const apolloServer = new ApolloServer({
@@ -99,16 +111,9 @@ app.use((req, res, next) => {
       }
     }
 
-    // Start the server on provided PORT (for PaaS) or fallback to 5000
-    const port = parseInt(process.env.PORT || "5000", 10);
-    server.listen(port, "0.0.0.0", () => {
-      process.stdout.write(`\n🚀 Server running on http://localhost:${port}\n`);
-      process.stdout.write(`Press Ctrl+C to exit.\n\n`);
-      log(`🚀 Server running on http://localhost:${port}`);
-      log(`Press Ctrl+C to exit.`);
-    });
+    log(`Server fully initialized.`);
   } catch (err) {
-    console.error("Fatal server error:", err);
+    process.stderr.write(`Fatal server error: ${(err as Error).message}\n${(err as Error).stack}\n`);
     process.exit(1);
   }
 })();
