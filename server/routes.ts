@@ -205,10 +205,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
           )
         );
 
-      // Notify the other participant about the decision
-      try {
-        // Lazy import of io instance is not available here; emit handled in socket layer upon next message
-      } catch {}
+      // Find the other participant (the sender of the request) and notify them
+      const otherParticipants = await db
+        .select({ userId: conversationParticipants.userId })
+        .from(conversationParticipants)
+        .where(
+          and(
+            eq(conversationParticipants.conversationId, conversationId),
+            ne(conversationParticipants.userId, userId)
+          )
+        );
+
+      // Emit request_decision event to the sender
+      const io = (req.app as any).io;
+      if (io) {
+        for (const p of otherParticipants) {
+          io.to(`user:${p.userId}`).emit("request_decision", {
+            conversationId,
+            fromUserId: userId,
+            accepted: accept,
+          });
+        }
+      }
 
       res.json({
         message: accept ? "Conversation accepted" : "Conversation blocked",
@@ -539,6 +557,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       credentials: true,
     },
   });
+
+  // Store io instance on app for use in routes
+  (app as any).io = io;
 
   setupSocket(io);
 

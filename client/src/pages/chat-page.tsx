@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useAuth } from "../hooks/use-auth"; // Assuming use-auth is in parent directory's hooks
 import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "../lib/queryClient"; // Assuming lib is in parent directory
@@ -30,6 +30,9 @@ export default function ChatPage() {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [userKeys, setUserKeys] = useState<{ publicKey: string; secretKey: string } | null>(null);
   const [onlineUsers, setOnlineUsers] = useState<Set<number>>(new Set());
+  // Track typing users: Map<conversationId, Set<userId>>
+  const [typingUsers, setTypingUsers] = useState<Map<number, Set<number>>>(new Map());
+  const typingTimers = useRef<Map<string, NodeJS.Timeout>>(new Map());
   const publicKeyCache = useRef<Map<number, string>>(new Map());
   const conversationsRef = useRef<Conversation[]>([]);
 
@@ -79,15 +82,15 @@ export default function ChatPage() {
       }
 
       const { publicKey } = await res.json();
-      
+
       if (!publicKey) {
         console.error(`User ${userId} has no public key in database. They need to login again to generate keys.`);
         return null;
       }
-      
+
       // Cache the public key
       publicKeyCache.current.set(userId, publicKey);
-      
+
       return publicKey;
     } catch (error) {
       console.error("Error fetching public key:", error);
@@ -110,7 +113,7 @@ export default function ChatPage() {
 
     try {
       const parsed = JSON.parse(message.content);
-      
+
       // If it doesn't have encrypted/nonce, it's already decrypted or plain text
       if (!parsed.encrypted || !parsed.nonce) {
         console.warn("[decrypt] Message missing encrypted/nonce fields:", message.id);
@@ -124,12 +127,12 @@ export default function ChatPage() {
         // Own message: decrypt using recipient's public key
         const conversation = conversationsRef.current.find(c => c.id === message.conversationId);
         const recipient = conversation?.participants.find((p) => p.id !== user?.id);
-        
+
         if (!recipient) {
           console.error("[decrypt] No recipient found for own message:", message.id);
           return { ...message, content: "[Error: Cannot find recipient]" };
         }
-        
+
         const recipientPublicKey = await fetchPublicKey(recipient.id);
         if (!recipientPublicKey) {
           // Recipient has no public key uploaded — show friendly notice instead of the raw encrypted JSON
@@ -185,20 +188,20 @@ export default function ChatPage() {
         // Decrypt messages in batches to prevent UI blocking
         const batchSize = 10;
         const decrypted: Message[] = [];
-        
+
         for (let i = 0; i < conversationMessages.length; i += batchSize) {
           const batch = conversationMessages.slice(i, i + batchSize);
           const batchDecrypted = await Promise.all(
             batch.map(msg => decryptMessageContent(msg))
           );
           decrypted.push(...batchDecrypted);
-          
+
           // Update UI incrementally for better perceived performance
           if (i === 0 || i + batchSize >= conversationMessages.length) {
             setMessages([...decrypted]);
           }
         }
-        
+
         setHasMoreMessages(conversationMessages.length === 50);
       }
     };
@@ -236,7 +239,7 @@ export default function ChatPage() {
 
     newSocket.on("new_message", async (message: Message) => {
       console.debug("[new_message] Received:", { id: message.id, senderId: message.senderId, conversationId: message.conversationId });
-      
+
       // Decrypt the message content if it's from another user
       if (message.senderId !== user.id && userKeys) {
         const senderPublicKey = await fetchPublicKey(message.senderId);
@@ -281,7 +284,7 @@ export default function ChatPage() {
             // Get conversation from current state via ref
             const conversation = conversationsRef.current.find(c => c.id === message.conversationId);
             const recipient = conversation?.participants.find((p) => p.id !== user.id);
-            
+
             if (recipient) {
               const recipientPublicKey = await fetchPublicKey(recipient.id);
               if (!recipientPublicKey) {
@@ -351,6 +354,70 @@ export default function ChatPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/conversations"] });
     });
 
+    // Chat request: when someone sends a request to start a conversation
+    newSocket.on("chat_request", ({ conversationId, fromUserId }: { conversationId: number; fromUserId: number }) => {
+      console.debug("[chat_request] New request from user", fromUserId, "for conversation", conversationId);
+      queryClient.invalidateQueries({ queryKey: ["/api/conversations"] });
+    });
+
+    // Typing indicator: listen for user_typing events
+    newSocket.on("user_typing", ({ userId, isTyping }: { userId: number; isTyping: boolean }) => {
+      // We don't get conversationId from the server event, but we know which
+      // conversation room emitted it. Match it with selectedConversation.
+      setTypingUsers(prev => {
+        const newMap = new Map(prev);
+        const convId = selectedConversation;
+        if (!convId) return prev;
+
+        const currentSet = new Set(newMap.get(convId) || []);
+        if (isTyping) {
+          currentSet.add(userId);
+        } else {
+          currentSet.delete(userId);
+        }
+
+        if (currentSet.size > 0) {
+          newMap.set(convId, currentSet);
+        } else {
+          newMap.delete(convId);
+        }
+
+        // Auto-clear after 3 seconds in case stop event is lost
+        const timerKey = `${convId}:${userId}`;
+        const existingTimer = typingTimers.current.get(timerKey);
+        if (existingTimer) clearTimeout(existingTimer);
+
+        if (isTyping) {
+          const timer = setTimeout(() => {
+            setTypingUsers(p => {
+              const m = new Map(p);
+              const s = new Set(m.get(convId) || []);
+              s.delete(userId);
+              if (s.size > 0) m.set(convId, s);
+              else m.delete(convId);
+              return m;
+            });
+            typingTimers.current.delete(timerKey);
+          }, 3000);
+          typingTimers.current.set(timerKey, timer);
+        } else {
+          typingTimers.current.delete(timerKey);
+        }
+
+        return newMap;
+      });
+    });
+
+    // Request decision: when the recipient accepts/rejects the chat request
+    newSocket.on("request_decision", ({ conversationId, fromUserId, accepted }: { conversationId: number; fromUserId: number; accepted: boolean }) => {
+      console.debug("[request_decision] User", fromUserId, accepted ? "accepted" : "rejected", "conversation", conversationId);
+      queryClient.invalidateQueries({ queryKey: ["/api/conversations"] });
+      // Refresh messages too if currently viewing the conversation
+      if (conversationId === selectedConversation) {
+        queryClient.invalidateQueries({ queryKey: [`/api/conversations/${conversationId}/messages`] });
+      }
+    });
+
     setSocket(newSocket);
 
     return () => {
@@ -363,6 +430,12 @@ export default function ChatPage() {
       newSocket.off("user_offline");
       newSocket.off("online_users");
       newSocket.off("conversation_activity");
+      newSocket.off("chat_request");
+      newSocket.off("request_decision");
+      newSocket.off("user_typing");
+      // Clear all typing timers
+      typingTimers.current.forEach(timer => clearTimeout(timer));
+      typingTimers.current.clear();
       newSocket.disconnect();
     };
   }, [user?.id, userKeys?.publicKey, userKeys?.secretKey, selectedConversation, fetchPublicKey]); // Use primitive values only
@@ -410,12 +483,12 @@ export default function ChatPage() {
       if (!res.ok) throw new Error("Failed to load more messages");
 
       const olderMessages: Message[] = await res.json();
-      
+
       if (olderMessages.length > 0) {
         // Decrypt the older messages in batches
         const batchSize = 10;
         const decryptedOlderMessages: Message[] = [];
-        
+
         for (let i = 0; i < olderMessages.length; i += batchSize) {
           const batch = olderMessages.slice(i, i + batchSize);
           const batchDecrypted = await Promise.all(
@@ -423,7 +496,7 @@ export default function ChatPage() {
           );
           decryptedOlderMessages.push(...batchDecrypted);
         }
-        
+
         setMessages((prev) => [...decryptedOlderMessages, ...prev]);
         setHasMoreMessages(olderMessages.length === 50);
       } else {
@@ -478,7 +551,7 @@ export default function ChatPage() {
       });
     } catch (error) {
       console.error("Error sending encrypted message:", error);
-       // Replaced alert() with console error/warning as per instructions
+      // Replaced alert() with console error/warning as per instructions
       console.warn("Failed to send message. Please try again.");
     }
   }, [socket, selectedConversation, userKeys?.publicKey, userKeys?.secretKey, user?.id, fetchPublicKey]); // Include conversations here since it's needed
@@ -554,6 +627,18 @@ export default function ChatPage() {
   const currentConversation =
     conversations.find((c) => c.id === selectedConversation) || null;
 
+  // Compute if the other user is typing in the current conversation
+  const isOtherUserTyping = useMemo(() => {
+    if (!selectedConversation) return false;
+    const typingSet = typingUsers.get(selectedConversation);
+    if (!typingSet || typingSet.size === 0) return false;
+    // Filter out current user
+    for (const uid of typingSet) {
+      if (uid !== user?.id) return true;
+    }
+    return false;
+  }, [selectedConversation, typingUsers, user?.id]);
+
   // Responsiveness logic:
   // On mobile (up to lg breakpoint), only show the sidebar if no conversation is selected.
   const isSidebarVisible = !selectedConversation;
@@ -582,7 +667,7 @@ export default function ChatPage() {
 
       {/* Sidebar - always visible on large screens, conditionally visible on small screens */}
       {/* On mobile, takes full width (w-full) when visible */}
-      <div 
+      <div
         className={`${isSidebarVisible ? 'w-full' : 'hidden'} lg:w-80 xl:w-[400px] lg:block flex-shrink-0 border-r border-[#30363D] h-screen`}
       >
         <Sidebar
@@ -611,11 +696,14 @@ export default function ChatPage() {
           hasMore={hasMoreMessages}
           isLoadingMore={isLoadingMore}
           onBack={handleBackToConversations}
-          showBackButton={!!selectedConversation} // Show back button when chat area is visible
+          showBackButton={!!selectedConversation}
           isLoadingMessages={isLoadingMessages}
           onlineUsers={onlineUsers}
           onStartVideoCall={(toUserId) => startCall(toUserId, { audio: true, video: true })}
           onStartAudioCall={(toUserId) => startCall(toUserId, { audio: true, video: false })}
+          isOtherUserTyping={isOtherUserTyping}
+          socket={socket}
+          conversationId={selectedConversation}
         />
       </div>
 

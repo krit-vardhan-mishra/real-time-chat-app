@@ -30,6 +30,7 @@ interface Conversation {
     username: string;
     fullName?: string | null;
     avatar?: string | null;
+    state?: string;
   }>;
   lastMessage?: {
     id: number;
@@ -221,9 +222,9 @@ const Sidebar = memo(function Sidebar({
             {isSearchMode ? "Search Users" : isDualSearchMode ? "Search & Filter" : "Chats"}
           </h2>
           <p className="text-[10px] sm:text-xs text-gray-500 truncate">
-            {isSearchMode 
-              ? "Find people to chat with" 
-              : isDualSearchMode 
+            {isSearchMode
+              ? "Find people to chat with"
+              : isDualSearchMode
                 ? "Search users and filter conversations"
                 : (currentUser.fullName || currentUser.username)
             }
@@ -370,6 +371,7 @@ const Sidebar = memo(function Sidebar({
                       avatarConfig={avatarConfig}
                       isSelected={selectedId === conv.id}
                       onSelect={onSelect}
+                      currentUserId={currentUser.id}
                     />
                   );
                 })
@@ -383,11 +385,10 @@ const Sidebar = memo(function Sidebar({
           <div className="p-2 bg-[#0D1117] border-b border-[#30363D]">
             <button
               onClick={handleDualSearchClick}
-              className={`w-full flex items-center gap-2 px-2 sm:px-3 py-1.5 sm:py-2 bg-[#161B22] border border-[#30363D] rounded-md transition-colors ${
-                isDualSearchMode 
-                  ? 'text-[#C9D1D9] bg-[#30363D]' 
-                  : 'text-gray-400 hover:text-[#C9D1D9] hover:bg-[#30363D]'
-              }`}
+              className={`w-full flex items-center gap-2 px-2 sm:px-3 py-1.5 sm:py-2 bg-[#161B22] border border-[#30363D] rounded-md transition-colors ${isDualSearchMode
+                ? 'text-[#C9D1D9] bg-[#30363D]'
+                : 'text-gray-400 hover:text-[#C9D1D9] hover:bg-[#30363D]'
+                }`}
             >
               <Search className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
               <span className="text-xs sm:text-sm">Search & Filter</span>
@@ -419,6 +420,7 @@ const Sidebar = memo(function Sidebar({
                     avatarConfig={avatarConfig}
                     isSelected={selectedId === conv.id}
                     onSelect={onSelect}
+                    currentUserId={currentUser.id}
                   />
                 );
               })
@@ -436,22 +438,29 @@ const ConversationItem = memo(function ConversationItem({
   avatarConfig,
   isSelected,
   onSelect,
+  currentUserId,
 }: {
   conversation: Conversation;
   displayName: string;
   avatarConfig: any;
   isSelected: boolean;
   onSelect: (id: number) => void;
+  currentUserId: number;
 }) {
+  // Determine if this is a pending request for the current user
+  const myParticipant = conversation.participants.find(p => p.id === currentUserId);
+  const otherParticipant = conversation.participants.find(p => p.id !== currentUserId);
+  const isPendingForMe = myParticipant?.state === 'pending';
+  const isRequestFromMe = otherParticipant?.state === 'pending';
   const getDisplayMessage = () => {
     if (!conversation.lastMessage?.content) return "";
-    
+
     const content = conversation.lastMessage.content;
-    
+
     if (content.includes("has no public key")) {
       return "🔒 Key required";
     }
-    
+
     try {
       const parsed = JSON.parse(content);
       if (parsed.encrypted && parsed.nonce) {
@@ -460,7 +469,7 @@ const ConversationItem = memo(function ConversationItem({
       return content;
     } catch {
       // Use substring with a responsive fallback for truncation
-      const maxLength = 50; 
+      const maxLength = 50;
       return content.length > maxLength ? content.substring(0, maxLength) + "..." : content;
     }
   };
@@ -468,14 +477,27 @@ const ConversationItem = memo(function ConversationItem({
   return (
     <button
       onClick={() => onSelect(conversation.id)}
-      className={`w-full p-2 sm:p-3 text-left hover:bg-[#161B22] transition-colors flex items-center gap-2 sm:gap-3 border-b border-[#30363D] ${
-        isSelected ? "bg-[#161B22]" : ""
-      }`}
+      className={`w-full p-2 sm:p-3 text-left hover:bg-[#161B22] transition-colors flex items-center gap-2 sm:gap-3 border-b border-[#30363D] ${isSelected ? "bg-[#161B22]" : ""
+        }`}
     >
-      <Avatar className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex-shrink-0" {...avatarConfig} />
+      <div className="relative">
+        <Avatar className="w-9 h-9 sm:w-10 sm:h-10 rounded-full flex-shrink-0" {...avatarConfig} />
+        {/* Pending request indicator */}
+        {isPendingForMe && (
+          <div className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-yellow-500 border-2 border-[#0D1117]" title="Chat request" />
+        )}
+      </div>
       <div className="flex-1 min-w-0">
         <div className="flex justify-between items-baseline mb-0.5 sm:mb-1">
-          <h3 className="font-medium text-sm sm:text-base text-[#C9D1D9] truncate">{displayName}</h3>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <h3 className="font-medium text-sm sm:text-base text-[#C9D1D9] truncate">{displayName}</h3>
+            {isPendingForMe && (
+              <span className="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium bg-yellow-500/20 text-yellow-400 rounded">Request</span>
+            )}
+            {isRequestFromMe && (
+              <span className="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium bg-blue-500/20 text-blue-400 rounded">Pending</span>
+            )}
+          </div>
           {conversation.lastMessage && (
             <div className="flex flex-col items-end flex-shrink-0 ml-2">
               <span className="text-[10px] sm:text-xs text-gray-500">

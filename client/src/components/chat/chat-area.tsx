@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { type Socket } from "socket.io-client";
 import { genConfig } from "react-nice-avatar";
 import SelectedUserProfile from "./selected-user-profile";
 import Conversation from "@/data/conversation";
@@ -23,6 +24,9 @@ interface ChatAreaProps {
   onlineUsers?: Set<number>;
   onStartVideoCall?: (toUserId: number) => void;
   onStartAudioCall?: (toUserId: number) => void;
+  isOtherUserTyping?: boolean;
+  socket?: Socket | null;
+  conversationId?: number | null;
 }
 
 export default function ChatArea({
@@ -39,6 +43,9 @@ export default function ChatArea({
   onlineUsers = new Set(),
   onStartVideoCall,
   onStartAudioCall,
+  isOtherUserTyping = false,
+  socket,
+  conversationId,
 }: ChatAreaProps) {
   const [messageInput, setMessageInput] = useState("");
   const [showProfile, setShowProfile] = useState(false);
@@ -87,6 +94,17 @@ export default function ChatArea({
   const otherIsPending = other?.state === 'pending';
   const isBlocked = me?.state === 'blocked' || other?.state === 'blocked';
 
+  // Check if current user has already sent a message (request message)
+  const hasSentRequestMessage = useMemo(
+    () => messages.some((msg) => msg.senderId === currentUserId),
+    [messages, currentUserId]
+  );
+
+  // Sender can still type their first message if other is pending and no message sent yet
+  const canSendFirstMessage = otherIsPending && !hasSentRequestMessage && !isBlocked;
+  // Sender must wait after sending first message
+  const isWaitingForApproval = otherIsPending && hasSentRequestMessage && !isBlocked;
+
   const displayName = useMemo(
     () => conversation?.name || other?.fullName || other?.username || "Unknown",
     [conversation?.name, other?.fullName, other?.username]
@@ -112,7 +130,7 @@ export default function ChatArea({
   if (!conversation) {
     // This view is visible only on large screens when no conversation is selected (mobile hides the whole ChatArea div).
     return (
-      <div className="flex items-center justify-center bg-[#0D1117] w-full h-full"> 
+      <div className="flex items-center justify-center bg-[#0D1117] w-full h-full">
         <div className="text-center text-gray-500 px-4">
           <p className="text-base sm:text-lg">Select a conversation to start chatting</p>
         </div>
@@ -164,22 +182,86 @@ export default function ChatArea({
         onLoadMore={onLoadMore}
       />
 
-      {/* Pending/blocked banner & controls */}
+      {/* State-specific banners */}
+
+      {/* For RECIPIENT: Show accept/reject UI when they have pending state */}
       {isPendingForMe && (
-        <div className="px-3 py-2 bg-[#161B22] border-t border-[#30363D]">
-          <div className="text-sm text-gray-300 mb-2">
-            {other?.fullName || other?.username} has messaged you for the first time. You don't know {pronoun}. Continue conversation?
+        <div className="px-3 py-3 bg-[#161B22] border-t border-[#30363D]">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse"></div>
+            <span className="text-sm font-medium text-[#C9D1D9]">Chat Request</span>
+          </div>
+          <div className="text-sm text-gray-300 mb-3">
+            <span className="font-medium text-[#C9D1D9]">{other?.fullName || other?.username}</span> wants to start a conversation with you. Accept to continue chatting.
           </div>
           <div className="flex gap-2">
-            <Button onClick={() => handleDecision(true)} className="bg-[#238636] hover:bg-[#238636]/90">Yes, continue</Button>
-            <Button variant="secondary" onClick={() => handleDecision(false)} className="bg-[#30363D] text-[#C9D1D9] hover:bg-[#30363D]/80">No, block</Button>
+            <Button onClick={() => handleDecision(true)} className="bg-[#238636] hover:bg-[#238636]/90 text-white">
+              Accept
+            </Button>
+            <Button variant="secondary" onClick={() => handleDecision(false)} className="bg-[#30363D] text-[#C9D1D9] hover:bg-[#30363D]/80 hover:text-red-400">
+              Reject
+            </Button>
           </div>
         </div>
       )}
 
-      {isBlocked && (
-        <div className="px-3 py-2 bg-[#161B22] border-t border-[#30363D] text-sm text-red-400">
-          Conversation is blocked. You cannot send messages.
+      {/* For SENDER: Show waiting message when recipient hasn't responded yet (only after first message sent) */}
+      {isWaitingForApproval && (
+        <div className="px-3 py-3 bg-[#161B22] border-t border-[#30363D]">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse"></div>
+            <span className="text-sm text-gray-300">
+              Waiting for <span className="font-medium text-[#C9D1D9]">{other?.fullName || other?.username}</span> to accept your request...
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* For SENDER: Show hint to send first message */}
+      {canSendFirstMessage && (
+        <div className="px-3 py-3 bg-[#161B22] border-t border-[#30363D]">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+            <span className="text-sm text-gray-300">
+              Send a message to request a conversation with <span className="font-medium text-[#C9D1D9]">{other?.fullName || other?.username}</span>
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* For SENDER: Show rejection message when their request was blocked */}
+      {other?.state === 'blocked' && (
+        <div className="px-3 py-3 bg-[#161B22] border-t border-[#30363D]">
+          <div className="flex items-center gap-2 mb-1">
+            <div className="w-2 h-2 rounded-full bg-red-500"></div>
+            <span className="text-sm font-medium text-red-400">Request Rejected</span>
+          </div>
+          <div className="text-sm text-gray-400">
+            Your request has been rejected and you cannot send messages until <span className="font-medium text-[#C9D1D9]">{other?.fullName || other?.username}</span> sends you a request.
+          </div>
+        </div>
+      )}
+
+      {/* For RECIPIENT: Show message when they blocked the sender */}
+      {me?.state === 'blocked' && (
+        <div className="px-3 py-2 bg-[#161B22] border-t border-[#30363D] text-sm text-gray-400">
+          You blocked this conversation. Messages cannot be sent.
+        </div>
+      )}
+
+      {/* Typing indicator */}
+      {isOtherUserTyping && !isPendingForMe && !isBlocked && (
+        <div className="px-4 py-1.5 bg-[#161B22] border-t border-[#30363D]">
+          <div className="flex items-center gap-2">
+            <div className="flex gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#58A6FF] animate-bounce" style={{ animationDelay: '0ms' }}></span>
+              <span className="w-1.5 h-1.5 rounded-full bg-[#58A6FF] animate-bounce" style={{ animationDelay: '150ms' }}></span>
+              <span className="w-1.5 h-1.5 rounded-full bg-[#58A6FF] animate-bounce" style={{ animationDelay: '300ms' }}></span>
+            </div>
+            <span className="text-xs text-gray-400">
+              {other?.fullName || other?.username || 'Someone'} is typing...
+            </span>
+          </div>
         </div>
       )}
 
@@ -187,7 +269,18 @@ export default function ChatArea({
         messageInput={messageInput}
         setMessageInput={setMessageInput}
         handleSend={handleSend}
-        disabled={isPendingForMe || otherIsPending || isBlocked}
+        disabled={isPendingForMe || isWaitingForApproval || isBlocked}
+        disabledMessage={
+          isPendingForMe
+            ? "Accept or reject the request above"
+            : isWaitingForApproval
+              ? "Waiting for response..."
+              : isBlocked
+                ? "Cannot send messages"
+                : undefined
+        }
+        socket={socket}
+        conversationId={conversationId}
       />
 
       {/* User Profile Overlay */}
