@@ -10,12 +10,29 @@ import {
   messages,
   users,
 } from "@shared/schema";
-import { eq, and, or, inArray, desc, lt, ne, count } from "drizzle-orm";
+import { eq, and, inArray, desc, ne, sql, lt } from "drizzle-orm";
+import { metricsHandler, incrementHttpRequests } from "./metrics/prometheus";
+import { apiRateLimiter, authRateLimiter } from "./middleware/rateLimiter";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   setupAuth(app);
 
-  // Get all conversations for the current user
+  // Global HTTP metrics tracking
+  app.use((req, _res, next) => {
+    if (req.path.startsWith("/api")) {
+      incrementHttpRequests();
+    }
+    next();
+  });
+
+  // Prometheus telemetry metrics endpoint
+  app.get("/api/metrics", metricsHandler);
+
+  // Apply API rate limiting middleware
+  app.use("/api/conversations", apiRateLimiter);
+  app.use("/api/users", apiRateLimiter);
+
+  // Get all conversations for the current user (Optimized Batch Queries: 0(1) DB roundtrips)
   app.get("/api/conversations", async (req, res) => {
     try {
       if (!req.isAuthenticated()) {
@@ -24,7 +41,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const userId = req.user!.id;
 
-      // Get all conversations where user is a participant
+      // 1. Get all conversations where user is a participant
       const userConversations = await db
         .select({
           conversation: conversations,
@@ -37,57 +54,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
         )
         .where(eq(conversationParticipants.userId, userId));
 
-      // Get the other participants for each conversation
-      const conversationsWithParticipants = await Promise.all(
-        userConversations.map(async ({ conversation }) => {
-          const participants = await db
-            .select({
-              user: users,
-              state: conversationParticipants.state,
-            })
-            .from(conversationParticipants)
-            .innerJoin(users, eq(conversationParticipants.userId, users.id))
-            .where(
-              eq(conversationParticipants.conversationId, conversation.id)
-            );
+      if (userConversations.length === 0) {
+        return res.json([]);
+      }
 
-          // Get last message
-          const [lastMessage] = await db
-            .select()
-            .from(messages)
-            .where(eq(messages.conversationId, conversation.id))
-            .orderBy(desc(messages.createdAt))
-            .limit(1);
+      const convIds = userConversations.map((c) => c.conversation.id);
 
-          // Compute unread status for the current user: any message not read and not sent by me
-          const [{ value: unreadCount } = { value: 0 }] = await db
-            .select({ value: count(messages.id) })
-            .from(messages)
-            .where(
-              and(
-                eq(messages.conversationId, conversation.id),
-                eq(messages.read, false),
-                ne(messages.senderId, userId)
-              )
-            );
-
-          return {
-            ...conversation,
-            participants: participants.map((p) => ({
-              id: p.user.id,
-              username: p.user.username,
-              fullName: p.user.fullName,
-              avatar: p.user.avatar,
-              gender: p.user.gender,
-              state: p.state,
-            })),
-            lastMessage: lastMessage || null,
-            hasUnread: (unreadCount as unknown as number) > 0,
-          };
+      // 2. Batch fetch ALL participants for ALL user conversations in 1 query
+      const allParticipants = await db
+        .select({
+          conversationId: conversationParticipants.conversationId,
+          user: users,
+          state: conversationParticipants.state,
         })
-      );
+        .from(conversationParticipants)
+        .innerJoin(users, eq(conversationParticipants.userId, users.id))
+        .where(inArray(conversationParticipants.conversationId, convIds));
 
-      res.json(conversationsWithParticipants);
+      // 3. Batch fetch latest messages per conversation
+      const allMessages = await db
+        .select()
+        .from(messages)
+        .where(inArray(messages.conversationId, convIds))
+        .orderBy(desc(messages.createdAt));
+
+      // Group data in-memory (O(N) CPU operations instead of O(N) DB I/O)
+      const participantsByConv = new Map<number, any[]>();
+      for (const p of allParticipants) {
+        if (!participantsByConv.has(p.conversationId)) {
+          participantsByConv.set(p.conversationId, []);
+        }
+        participantsByConv.get(p.conversationId)!.push({
+          id: p.user.id,
+          username: p.user.username,
+          fullName: p.user.fullName,
+          avatar: p.user.avatar,
+          gender: p.user.gender,
+          state: p.state,
+        });
+      }
+
+      const lastMessageByConv = new Map<number, any>();
+      const unreadByConv = new Map<number, boolean>();
+
+      for (const msg of allMessages) {
+        if (!lastMessageByConv.has(msg.conversationId)) {
+          lastMessageByConv.set(msg.conversationId, msg);
+        }
+        if (!msg.read && msg.senderId !== userId) {
+          unreadByConv.set(msg.conversationId, true);
+        }
+      }
+
+      const result = userConversations.map(({ conversation }) => ({
+        ...conversation,
+        participants: participantsByConv.get(conversation.id) || [],
+        lastMessage: lastMessageByConv.get(conversation.id) || null,
+        hasUnread: unreadByConv.get(conversation.id) || false,
+      }));
+
+      res.json(result);
     } catch (error) {
       console.error("Error fetching conversations:", error);
       res.status(500).json({ message: "Failed to fetch conversations" });

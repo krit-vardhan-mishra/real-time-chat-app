@@ -1,47 +1,59 @@
 import { Server as IOServer, Socket } from "socket.io";
+import { createAdapter } from "@socket.io/redis-adapter";
 import { createLogger } from "../shared/logger";
 import { db } from "./db";
 import { messages, conversationParticipants } from "@shared/schema";
 import { eq, and, ne, count } from "drizzle-orm";
+import { redisPub, redisSub, setUserOnline, setUserOffline, getOnlineUsers } from "./redis";
+import { messageQueue } from "./queues/messageQueue";
+import { incrementActiveSockets, decrementActiveSockets, recordMessageSent } from "./metrics/prometheus";
 
 interface SocketWithUser extends Socket {
   userId?: number;
 }
 
-// Track online users
-const onlineUsers = new Set<number>();
-
 /**
- * Socket.IO setup with encrypted message handling.
- * The server only stores and relays ciphertext—it never decrypts.
+ * Socket.IO setup with distributed Redis PubSub adapter, presence engine,
+ * metrics recording, and write-behind message buffer.
  */
 export function setupSocket(io: IOServer) {
   const log = createLogger("socket");
+
+  // Attach Redis adapter if Redis PubSub connections are available
+  if (redisPub && redisSub) {
+    try {
+      io.adapter(createAdapter(redisPub, redisSub));
+      log.info("⚡ Socket.IO Redis Adapter configured for horizontal scaling.");
+    } catch (err) {
+      log.error("Failed to attach Redis Adapter:", (err as Error).message);
+    }
+  }
+
   io.on("connection", (socket: SocketWithUser) => {
     log.info("User connected:", socket.id);
+    incrementActiveSockets();
 
     // Auto-authenticate from socket auth
     const userId = (socket.handshake.auth as any).userId;
     if (userId) {
       socket.userId = userId;
       socket.join(`user:${userId}`);
-      onlineUsers.add(userId);
-      // Notify all clients about user coming online
-      io.emit("user_online", { userId });
-      // Send current online users to the newly connected user
-      socket.emit("online_users", Array.from(onlineUsers));
+      setUserOnline(userId).then(async () => {
+        io.emit("user_online", { userId });
+        const onlineUsers = await getOnlineUsers();
+        socket.emit("online_users", onlineUsers);
+      });
       log.info(`User ${userId} authenticated on connection`);
     }
 
     // Step 1: authenticate socket connection (backup)
-    socket.on("authenticate", (userId: number) => {
+    socket.on("authenticate", async (userId: number) => {
       socket.userId = userId;
       socket.join(`user:${userId}`);
-      onlineUsers.add(userId);
-      // Notify all clients about user coming online
+      await setUserOnline(userId);
       io.emit("user_online", { userId });
-      // Send current online users to the newly connected user
-      socket.emit("online_users", Array.from(onlineUsers));
+      const onlineUsers = await getOnlineUsers();
+      socket.emit("online_users", onlineUsers);
       log.info(`User ${userId} authenticated and joined personal room`);
     });
 
@@ -153,16 +165,19 @@ export function setupSocket(io: IOServer) {
             }
           }
 
-          // Store message
-          const [newMessage] = await db
-            .insert(messages)
-            .values({
-              conversationId,
-              senderId: socket.userId,
-              content,
-              delivered: true,
-            })
-            .returning();
+          // Enqueue message via Write-Behind Queue for sub-millisecond real-time relay
+          recordMessageSent();
+          const messageId = await messageQueue.enqueue({
+            conversationId,
+            senderId: socket.userId,
+            content,
+            delivered: true,
+          });
+
+          const newMessage = {
+            id: messageId,
+            createdAt: new Date(),
+          };
 
           // If this is a request message (recipient is pending), notify them
           if (someonePending) {
@@ -398,9 +413,10 @@ export function setupSocket(io: IOServer) {
       }
     });
 
-    socket.on("disconnect", () => {
+    socket.on("disconnect", async () => {
+      decrementActiveSockets();
       if (socket.userId) {
-        onlineUsers.delete(socket.userId);
+        await setUserOffline(socket.userId);
         // Notify all clients about user going offline
         io.emit("user_offline", { userId: socket.userId });
       }

@@ -633,10 +633,7 @@ export default function ChatPage() {
     const typingSet = typingUsers.get(selectedConversation);
     if (!typingSet || typingSet.size === 0) return false;
     // Filter out current user
-    for (const uid of typingSet) {
-      if (uid !== user?.id) return true;
-    }
-    return false;
+    return Array.from(typingSet).some((uid) => uid !== user?.id);
   }, [selectedConversation, typingUsers, user?.id]);
 
   // Responsiveness logic:
